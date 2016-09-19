@@ -10,10 +10,10 @@ LLVM_SRC_ROOT = /opt/llvm-source
 LLVM_OBJ_ROOT = /opt/llvm
 
 # Set the directory root of this project's source files
-PROJ_SRC_ROOT := $(subst //,/,/home/hyunjong/hw1/hw1pass)
+PROJ_SRC_ROOT := $(subst //,/,/home/hyunjong/compiler/hw1/hw1pass)
 
 # Set the root directory of this project's object files
-PROJ_OBJ_ROOT := $(subst //,/,/home/hyunjong/hw1/hw1pass)
+PROJ_OBJ_ROOT := $(subst //,/,/home/hyunjong/compiler/hw1/hw1pass)
 
 # Set the root directory of this project's install prefix
 PROJ_INSTALL_ROOT := /usr/local
