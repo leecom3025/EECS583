@@ -28,7 +28,7 @@ llc < $fname.lamp.bc > $fname.lamp.s
 g++ -o $fname.lamp.exe $fname.lamp.s $HW1_PASS/tools/lamp-profiler/lamp_hooks.o
 
 echo "profiling $1 with $2"
-./stats/$1.lamp.exe $2 > /dev/null
+./stats/$1.lamp.exe $2 # > /dev/null
 
 echo "loading prof data $1"
 echo "======================================================="

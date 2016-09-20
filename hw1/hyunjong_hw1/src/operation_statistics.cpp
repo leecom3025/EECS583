@@ -28,7 +28,7 @@ namespace {
       for (BasicBlock::iterator i = b->begin(); i != b->end(); i++) {
         float count = (PI->getExecutionCount(b) < 0) ? 0 :
           PI->getExecutionCount(b);
-        errs() << i->getOpcodeName() << " : " << count << "\n";
+        /* errs() << i->getOpcodeName() << " : " << count << "\n"; */
         countOps += count;
         switch(i->getOpcode()) {
           /* count branch */
@@ -93,25 +93,22 @@ namespace {
         }
       }
     }
-    if (countOps == 0.0) {
-      countAlu = countFloat = countMem = countBBranch = countUBranch = countEtc = 0;
-    }
+
     errs() << F.getName() << ",";
     errs() << countOps << ",";
-    errs() << format("%f,", (countAlu/(float)countOps));
-    errs() << format("%f,",(countFloat/(float)countOps));
-    errs() << format("%f,",(countMem/(float)countOps));
-    errs() << format("%f,",(countBBranch/(float)countOps));
-    errs() << format("%f,",(countUBranch/(float)countOps));
-    errs() << format("%f\n",(countEtc/(float)countOps)); 
+    if (countOps == 0.0) {
+      errs() << "0,0,0,0,0,0\n";
+      /* countAlu = countFloat = countMem = countBBranch = countUBranch = countEtc = 0; */
+    } else { 
+      errs() << format("%f,", (countAlu/(float)countOps));
+      errs() << format("%f,",(countFloat/(float)countOps));
+      errs() << format("%f,",(countMem/(float)countOps));
+      errs() << format("%f,",(countBBranch/(float)countOps));
+      errs() << format("%f,",(countUBranch/(float)countOps));
+      errs() << format("%f\n",(countEtc/(float)countOps)); 
+    }
 
-    /* errs() << "   Br: " << countBranch << "\n"; */
-    /* errs() << "  ALU: " << countAlu << "\n"; */
-    /* errs() << "Float: " << countFloat << "\n"; */
-    /* errs() << "  Mem: " << countMem << "\n"; */
-    /* errs() << "  Etc: " << countEtc << "\n"; */
- 
-    return false; // return true if you modified the code
+    return true; // return true if you modified the code
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const {

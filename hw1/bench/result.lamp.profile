@@ -21,7 +21,7 @@ BEGIN Memory Profile
 (20 0 0 14 (1 0 ) )
 (20 1 22 21 (999 0 ) )
 END Memory Profile
-run_time: 0.0166
+run_time: 0.0148
 Num dynamic stores: 4804
 Num dynamic loads: 11603
 Max loop nest depth: 1

@@ -27,58 +27,45 @@ namespace {
     p2() : ModulePass(ID) {} 
 
     virtual bool runOnModule(Module &M) {
+      std::map<unsigned int, unsigned int> DepFrac;
+      std::map<std::pair<Instruction*, Instruction*>*, unsigned int>::iterator d;
+
       PI = &getAnalysis<ProfileInfo>();
       LLP = &getAnalysis<LAMPLoadProfile>();
 
-      /*
-       *  std::map<unsigned int, Instruction*> IdToInstMap; // Inst* -> InstId
-       *  std::map<Instruction*, unsigned int> InstToIdMap; // InstID -> Inst*
-       *  std::map<std::pair<Instruction*, Instruction*>*, unsigned int> 
-       *      DepToTimesMap
-       */
-      float ld_total = 0;
+      // get < loadid : # of deps >
+      for (d = LLP->DepToTimesMap.begin(); d != LLP->DepToTimesMap.end(); d++) {
+        Instruction *instr1 = d->first->first;
+        Instruction *instr2 = d->first->second;
+        if(isa<LoadInst>(instr1) && isa<StoreInst>(instr2)) {
+          unsigned int loadid = LLP->InstToIdMap[instr1];
+          unsigned int count = d->second;
+          /* if (DepFrac[loadid]) */ 
+          /*   errs() << "load id " << loadid << " incremented!\n"; */
+          DepFrac[loadid] += count; 
+        }
+      }
+
+      // get < loaid : # of deps / # of counts > 
       for (Module::iterator f = M.begin(); f != M.end(); f++) {
         for (Function::iterator b = f->begin(); b != f->end(); b++) {
           for (BasicBlock::iterator i = b->begin(); i != b->end(); i++) {
-            /* errs() << b << ": " << LLP->InstToIdMap[b] << "\n"; */
             if (i->getOpcode() == Instruction::Load) { 
-              float t = PI->getExecutionCount(b);
-              ld_total += t;
+              unsigned int loadid = LLP->InstToIdMap[i];
+              float count = PI->getExecutionCount(b);
+              float depCount = DepFrac[loadid];
+              float percent = depCount / count;
+
+              if (!count || !depCount)
+                percent = 0;
+
+              errs() << loadid << "," << format("%f", percent) << "\n";
             }
           }
         }
       }
 
-      unsigned int MaxLoadId = 0;
-      std::map<unsigned int, unsigned int> DepFrac;
-      std::map<std::pair<Instruction*, Instruction*>*, unsigned int>::iterator d;
-      for (d = LLP->DepToTimesMap.begin(); d != LLP->DepToTimesMap.end(); d++) {
-        Instruction *instr1 = d->first->first;
-        Instruction *instr2 = d->first->second;
-        /* errs() << instr1->getOpcodeName() << " depends " <<
-         * instr2->getOpcodeName() << "\n"; */
-        if(isa<LoadInst>(instr1) && isa<StoreInst>(instr2)) {
-          unsigned int loadid = LLP->InstToIdMap[instr1];
-          unsigned int count = d->second;
-
-          DepFrac[loadid] += count; 
-
-          if (loadid > MaxLoadId) 
-            MaxLoadId = loadid;
-
-          /* errs() << "< Ld[" << loadid << "], St[" << */  
-          /*   LLP->InstToIdMap[instr2] << "] > : " << count << "\n"; */
-        }
-      }
-
-      /* errs() << "=============================================\n"; */
-
-      for (unsigned int i = 0; i < MaxLoadId + 1; i++) {
-        float percent = DepFrac[i]/ld_total;
-        errs() << i << format(",%f\n", percent);
-      }
-
-      return false;
+      return true;
     }
 
     void getAnalysisUsage(AnalysisUsage &AU) const {
