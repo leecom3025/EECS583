@@ -428,7 +428,7 @@ void SLICM::SinkRegion(DomTreeNode *N) {
 /// first order w.r.t the DominatorTree.  This allows us to visit definitions
 /// before uses, allowing us to hoist a loop body in one pass without iteration.
 ///
-static Value *checker;
+static list<Instruction *> hoistedTopReg;
 void SLICM::HoistRegion(DomTreeNode *N) {
   assert(N != 0 && "Null dominator tree node?");
   BasicBlock *BB = N->getBlock();
@@ -436,7 +436,6 @@ void SLICM::HoistRegion(DomTreeNode *N) {
   list<Instruction *> lds, sts;
   list<Instruction *> depset;
   list<Instruction *> hoistedTop;
-
 
   map< Value *, list<Instruction *> > alias_map;
 
@@ -489,7 +488,9 @@ void SLICM::HoistRegion(DomTreeNode *N) {
           for (AliasSet::iterator ait = aliset->begin(); ait != aliset->end(); ait++) 
           {
             Value *ali = ait->getValue();
+            if (!ali) continue;
             Instruction *newI = dyn_cast<Instruction>(ali);
+            if (!newI) continue;
             if (Op != ali) 
             {
               for (Value::use_iterator UI = newI->use_begin(); UI != newI->use_end(); UI++) 
@@ -579,13 +580,14 @@ void SLICM::HoistRegion(DomTreeNode *N) {
     flag_builder.SetInsertPoint(innerI);
 
     flag = flag_map[innerI];
-    /* errs() << ">>>> flag: " << *flag << "\n"; */
+    errs() << ">>>> flag: " << *flag << "\n";
     Value *cond = flag_builder.CreateLoad(flag);
-    /* errs() << ">>>> Cond: " << *cond << "\n"; */
+    errs() << ">>>> Cond: " << *cond << "\n";
 
     rest = SplitBlock(home, innerI, this);
     rest_begin = rest->begin();
-    /* errs() << "restBB: " << *rest << "\n"; */
+    Instruction &rest_end = *(--rest->end());
+    errs() << "restBB: " << *rest << "\n";
 
     bbiter = home->end();
     Instruction &redoI = *(--bbiter);
@@ -593,25 +595,66 @@ void SLICM::HoistRegion(DomTreeNode *N) {
     redo_begin = redo->begin();
 
     BranchInst::Create(redo, rest, cond, home->getTerminator());
-    /* errs() << "RedoBB: " << *redo << "\n"; */
+    errs() << "RedoBB: " << *redo << "\n";
     home->getTerminator()->eraseFromParent();
 
     bbiter = redo->end();
     Instruction &redo_end = *(--bbiter);
 
     home = const_home;
-    /* errs() << "Home: " << *home << "\n"; */
+    errs() << "Home: " << *home << "\n";
+    errs() << "Inner I: " << *innerI << "\n";
+    errs() << "bbiter : " << *bbiter << "\n";
+
+    IRBuilder<> irbuilder(Preheader);
+    irbuilder.SetInsertPoint(bbiter);
+    Instruction *stack;
+    Instruction *last_val;
 
     for (list<Instruction *>::iterator itr2 = hoistedTop.begin(); itr2 !=
         hoistedTop.end(); itr2++) 
     {
       Instruction *subI = dyn_cast<Instruction>(*itr2);
-      errs() << "subI: " << *subI << "\n";
-      Instruction *newInst = subI->clone();
+      stack = hoistedTopReg.front();
+      hoistedTopReg.pop_front();
 
+      errs() << "subI: " << *subI << "\n";
+      errs() << "stack: " << *stack << "\n";
+
+      Instruction *newInst = subI->clone();
       redo->getInstList().insert(redo_end, newInst);
+
+      if (!isa<LoadInst>(subI)) { 
+        errs() << "out stack is... " << *last_val << "\n";
+        newInst->setOperand(0, last_val);
+        errs() << "op1: " << *newInst->getOperand(0) << "\n";
+      } 
+
+      last_val = newInst;
+      StoreInst *st = irbuilder.CreateStore(newInst, stack);
+      errs() << "store: " << *st << "\n";
+
     }
+
     errs() << "Redo BB changed to " << *redo << "\n";
+    errs() << "Rest BB changed to " << *rest << "\n";
+    errs() << "Rest end : " << rest_end << "\n";
+
+    if (isa<StoreInst>(innerI)) { 
+      irbuilder.SetInsertPoint(rest->begin());
+      Value *st_this = innerI->getOperand(0);
+      Value *st_to = innerI->getOperand(1);
+      errs() << "Store " << *st_this << " to " << *st_to << "\n";
+      errs() << "Store " << *stack << " to " << *st_to << "\n";
+      LoadInst *ld = irbuilder.CreateLoad(stack, "temp");
+      errs() << "ld: " << *ld << "\n";
+      StoreInst *st = irbuilder.CreateStore(ld, st_to);
+      errs() << "ld: " << *st << "\n";
+
+      innerI->eraseFromParent();
+    }
+
+
   }
 
   if (hoisted) {
@@ -619,6 +662,10 @@ void SLICM::HoistRegion(DomTreeNode *N) {
     // get operand of store and check if it's same as hoisted load instr 
     // if it's same, make redoBB and do load and multiply again
 
+    /*
+     * check ptr (alias) is changed [ICMP]
+     * if changed, update flag [store]
+     */
     errs() << "flag>>> " << *flag << "\n";
     for (map<Value*, list<Instruction*> >::iterator itr = alias_map.begin(); 
         itr != alias_map.end(); itr++) 
@@ -650,11 +697,30 @@ void SLICM::HoistRegion(DomTreeNode *N) {
 bool SLICM::hoist_wrapper(Instruction &I) 
 {
   errs() << "[" << __func__ << "]: " << I << "\n";
-  /* if (isa<LoadInst>(&I)) { */ 
-  /*   /1* errs() << "HOME: " << *home << "\n"; *1/ */
-  /* } */
+
+  errs() << "Preheader> " << *I.getParent()<< "\n";
 
   hoist(I);
+
+  errs() << "Preheader> " << *I.getParent()<< "\n";
+  errs() << "opcodeName " << I.getOpcodeName() << "\n";
+
+  IRBuilder<> irbuilder(Preheader);
+  irbuilder.SetInsertPoint(I.getParent()->begin());
+
+  Twine *name = new Twine(100+NumHoisted);
+  /* AllocaInst *stack = irbuilder.CreateAlloca(I.getOperand(0)->getType(), 0, *name); */ 
+  AllocaInst *stack = irbuilder.CreateAlloca(Type::getInt32Ty(getGlobalContext()), 0, *name); 
+  errs() << "Alloca " << *stack << "\n";
+
+  irbuilder.SetInsertPoint(--I.getParent()->end());
+  StoreInst *st = irbuilder.CreateStore(&I, stack);
+  errs() << "St " << *st << "\n";
+  hoistedTopReg.push_back(stack);
+  /* if (!isa<LoadInst>(I)) { */
+  /*   StoreInst *ST = new StoreInst(&I, stack); */
+  /*   errs() << "St " << *ST << "\n"; */
+  /* } */
 
   return true; 
 }
