@@ -134,6 +134,8 @@ namespace {
                              // may throw, thus preventing code motion of
                              // instructions with side effects.
     DenseMap<Loop*, AliasSetTracker*> LoopToAliasSetMap;
+    map< Instruction *, Instruction * > stack_map;
+    map< Value *, list<Instruction *> > alias_map;
 
     /// cloneBasicBlockAnalysis - Simple Analysis hook. Clone alias set info.
     void cloneBasicBlockAnalysis(BasicBlock *From, BasicBlock *To, Loop *L);
@@ -433,20 +435,13 @@ void SLICM::SinkRegion(DomTreeNode *N) {
 /// first order w.r.t the DominatorTree.  This allows us to visit definitions
 /// before uses, allowing us to hoist a loop body in one pass without iteration.
 ///
-static map< Instruction *, Instruction * > stack_map;
-  map< Value *, list<Instruction *> > alias_map;
+
 void SLICM::HoistRegion(DomTreeNode *N) {
   assert(N != 0 && "Null dominator tree node?");
   BasicBlock *BB = N->getBlock();
 
   list<Instruction *> hoistedTop;
-
-
   map<Instruction *, AllocaInst *> flag_map;
-  map<Instruction *, list<Instruction *> > dep_map;
-
-  bool hoisted = false;
-  bool hoistedAtTop = false;
 
   // If this subregion is not in the top level loop at all, exit.
   if (!CurLoop->contains(BB)) return;
@@ -476,18 +471,8 @@ void SLICM::HoistRegion(DomTreeNode *N) {
       // is safe to hoist the instruction.
       if (CurLoop->hasLoopInvariantOperands(&I) && canSinkOrHoistInst(I) &&
           isSafeToExecuteUnconditionally(I)) { 
-        hoistedAtTop = hoist_wrapper(I);
-        unsigned int lastOp = I.getNumOperands() - 1;
-        Value *Op = I.getOperand(lastOp);
-        /* errs() << "ld's last Op: " << *Op << "\n"; */
-        uint64_t Size = 0;
-        if (I.getType()->isSized())
-          Size = AA->getTypeStoreSize(I.getType());
-        AliasSet *aliset = CurAST->getAliasSetForPointerIfExists(Op, Size, 
-                                     I.getMetadata(LLVMContext::MD_tbaa));
-        list<Instruction *> alias_list;
-
-        
+        // JOSEPH: changed from hoist() to hoist_wrapper()
+        hoist_wrapper(I);
         hoistedTop.push_back(&I);
       }
     }
@@ -565,7 +550,6 @@ void SLICM::HoistRegion(DomTreeNode *N) {
     }
   }
 
-  errs() << "\t\t\t&&&&&&&&&&& SIZE &&&&&& " << redoBB_pair_list.size() << " " << NumStack << "\n";
 
   list< pair<Instruction *, Instruction * > > ::iterator set_iter;
   for (set_iter = redoBB_pair_list.begin(); set_iter != redoBB_pair_list.end(); set_iter++)
@@ -585,128 +569,6 @@ void SLICM::HoistRegion(DomTreeNode *N) {
       redoBB_split(split_loc, temp_begin, temp_end, flag);
     }
   }
-
-
-
-  return;
-
-
-#if 0 
-  /* find dependent instructions and build redoBB */
-  for (map<Instruction *, list<Instruction*> >::iterator miter = dep_map.begin();
-      miter != dep_map.end(); miter++) 
-  {
-    list<Instruction*> depset = miter->second;
-
-    /* if (depset.begin() != depset.end()) */
-    /*   errs() << "building redo BB for " << *miter->first << "\n"; */
-
-    for (list<Instruction*>::iterator itr = depset.begin(); itr != depset.end();
-        itr++) 
-    {
-      BasicBlock *home, *redo, *rest, *const_home;
-      BasicBlock::iterator bbiter, redo_begin, rest_begin;
-      Instruction *innerI = dyn_cast<Instruction>(*itr);
-      /* errs() << " itr --> " << *innerI << "\n"; */
-
-      home = innerI->getParent();
-      const_home = home;
-      IRBuilder<> flag_builder(Preheader);
-      flag_builder.SetInsertPoint(innerI);
-
-      flag = flag_map[innerI];
-      /* errs() << ">>>> flag: " << *flag << "\n"; */
-      Value *cond = flag_builder.CreateLoad(flag);
-      /* errs() << ">>>> Cond: " << *cond << "\n"; */
-
-      rest = SplitBlock(home, innerI, this);
-      rest_begin = rest->begin();
-      Instruction &rest_end = *(--rest->end());
-      /* errs() << "restBB: " << *rest << "\n"; */
-
-      bbiter = home->end();
-      Instruction &redoI = *(--bbiter);
-      redo = SplitBlock(home, &redoI, this);
-      redo_begin = redo->begin();
-
-      BranchInst::Create(redo, rest, cond, home->getTerminator());
-      /* errs() << "RedoBB: " << *redo << "\n"; */
-      home->getTerminator()->eraseFromParent();
-
-      bbiter = redo->end();
-      Instruction &redo_end = *(--bbiter);
-
-      home = const_home;
-      /* errs() << "Home: " << *home << "\n"; */
-      /* errs() << "Inner I: " << *innerI << "\n"; */
-      /* errs() << "bbiter : " << *bbiter << "\n"; */
-
-      IRBuilder<> irbuilder(Preheader);
-      irbuilder.SetInsertPoint(bbiter);
-
-      Instruction *stack = NULL, *last_val = NULL;
-      for (list<Instruction *>::iterator itr2 = hoistedTop.begin(); itr2 !=
-          hoistedTop.end(); itr2++) 
-      {
-        Instruction *subI = dyn_cast<Instruction>(*itr2);
-        /* errs() << "subI: " << *subI << "\n"; */
-
-        stack = stack_map[subI];
-        Value *op0 = subI->getOperand(0);
-        /* errs() << "op0 top : " << *op0 << "\n"; */
-        /* errs() << "op0 top type : " << *op0->getType() << "\n"; */
-
-        Value *op1 = subI->getOperand(subI->getNumOperands() - 1);
-        /* errs() << "op1 top : " << *op1 << "\n"; */
-        /* errs() << "op1 top type : " << *op1->getType() << "\n"; */
-        /* errs() << "stack: " << *stack << "\n"; */
-
-        Instruction *newInst = subI->clone();
-        redo->getInstList().insert(redo_end, newInst);
-
-        if (last_val && !isa<LoadInst>(*subI)) 
-        { 
-          /* errs() << "out stack is... " << *last_val << "\n"; */
-          newInst->setOperand(0, last_val);
-        }
-        /* errs() << "op1: " << *newInst->getOperand(0) << "\n"; */
-        StoreInst *st = irbuilder.CreateStore(newInst, stack);
-        /* errs() << "store: " << *st << "\n"; */
-        last_val = newInst;
-        /* errs() << "-=-=-=-=-=-=-=-=-=-=-=--=-=-=-=-=-=--=-=-=\n"; */
-      }
-
-      /* errs() << "Redo BB changed to " << *redo << "\n"; */
-      /* errs() << "Rest BB changed to " << *rest << "\n"; */
-      /* errs() << "InnerI : " << *innerI << "\n"; */
-
-      if (isa<StoreInst>(innerI) && stack) { 
-        irbuilder.SetInsertPoint(rest->begin());
-        Value *st_this = innerI->getOperand(0);
-        Value *st_to = innerI->getOperand(1);
-
-        /* errs() << "Store this " << *st_this << " to " << *st_to << "\n"; */
-        if (stack) { 
-          /* errs() << "Store stack " << *stack << " to " << *st_to << "\n"; */
-
-          LoadInst *ld = irbuilder.CreateLoad(stack, "temp");
-          /* errs() << "ld: " << *ld << "\n"; */
-
-          StoreInst *st = irbuilder.CreateStore(ld, st_to);
-          /* errs() << "ld: " << *st << "\n"; */
-
-          innerI->eraseFromParent();
-        } 
-      }
-
-      /*
-       * check ptr (alias) is changed [ICMP]
-       * if changed, update flag [store]
-       */
-      /* errs() << "flag>>> " << *flag << "\n"; */
-    }
-  }
-#endif
 
   return;
 }
@@ -734,7 +596,6 @@ void SLICM::redoBB_split(Instruction *split_loc, Instruction *Ibegin,
 
   rest = SplitBlock(home, split_loc, this);
   rest_begin = rest->begin();
-  Instruction &rest_end = *(--rest->end());
   errs() << "restBB: " << *rest << "\n";
 
   bbiter = home->end();
